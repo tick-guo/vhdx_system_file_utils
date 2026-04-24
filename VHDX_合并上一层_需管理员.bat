@@ -17,6 +17,8 @@ if "%~1"=="" (
 set "ChildDisk=%~f1"
 set "ChildName=%~nx1"
 set "WorkTmp=%temp%\vdisk_tmp_%random%.txt"
+:: 统一使用一个带随机数的diskpart临时脚本文件
+set "DiskPartScript=%temp%\diskpart_script_%random%.txt"
 
 echo ==============================================
 echo 子磁盘B: %ChildDisk%
@@ -24,20 +26,20 @@ echo ==============================================
 
 :: 1.强制分离磁盘，防止占用
 echo [1/5] 强制分离虚拟磁盘...
-(
-echo select vdisk file="%ChildDisk%"
-echo detach vdisk  
-) | diskpart  
+
+echo select vdisk file="%ChildDisk%" > "%DiskPartScript%"
+echo detach vdisk   >> "%DiskPartScript%"
+diskpart /s "%DiskPartScript%"   
 if !errorlevel! neq 0 (
     echo 【警告】分离磁盘异常，继续执行...
 )
 
 :: 2.导出子盘信息，提取【父盘A路径】
 echo [2/5] 读取父磁盘A信息...
-(
-echo select vdisk file="%ChildDisk%"
-echo detail vdisk
-) | diskpart > "%WorkTmp%"
+
+echo select vdisk file="%ChildDisk%" > "%DiskPartScript%"
+echo detail vdisk >> "%DiskPartScript%"
+diskpart /s "%DiskPartScript%" > "%WorkTmp%"
 
 :: 解析父路径：查找 "父虚拟磁盘" / "Parent virtual disk"
 set "ParentDisk="
@@ -60,10 +62,10 @@ echo 上层父磁盘A: !ParentDisk!
 
 :: 3.执行合并上一层 depth=1
 echo [3/5] 开始合并 B → A (depth=1)...
-(
-echo select vdisk file="%ChildDisk%"
-echo merge vdisk depth=1
-) | diskpart
+
+echo select vdisk file="%ChildDisk%" > "%DiskPartScript%"
+echo merge vdisk depth=1 >> "%DiskPartScript%"
+diskpart /s "%DiskPartScript%"
 if !errorlevel! neq 0 (
     echo 【致命错误】合并失败！立即终止，防止数据损坏
     pause>nul
