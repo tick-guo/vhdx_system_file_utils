@@ -3,100 +3,106 @@ rem chcp 65001 >nul
 setlocal enabledelayedexpansion
 
 :: ==============================================
-::  使用方法：直接把 差分子盘.vhdx 拖入本bat图标
-::  功能：自动合并上一层、改名续链、失败立即终止
+::  使用说明：直接拖拽 .vhdx 文件到bat图标
+::  功能：自动合并上一层、压缩文件，失败则终止
 :: ==============================================
 
-:: 检查是否拖入文件
+:: 检查是否传入文件参数
 if "%~1"=="" (
-    echo 【错误】请将差分VHDX文件拖入此脚本！
+    echo 请将需要处理的VHDX文件拖拽到本批处理文件上！
     pause>nul
     exit /b 1
 )
 
 set "ChildDisk=%~f1"
 set "ChildName=%~nx1"
-set "WorkTmp=%temp%\vdisk_tmp_%random%.txt"
+set "WorkTmp=%temp%\vdisk_detail_%random%.txt"
+:: 统一使用一个带随机数的diskpart临时脚本文件
+set "DiskPartScript=%temp%\diskpart_script_%random%.txt"
 
 echo ==============================================
-echo 子磁盘B: %ChildDisk%
+echo 处理目标: %ChildDisk%
 echo ==============================================
 
-:: 1.强制分离磁盘，防止占用
+:: 1.强制分离虚拟磁盘（终止占用）
 echo [1/5] 强制分离虚拟磁盘...
-(
-echo select vdisk file="%ChildDisk%"
-echo detach vdisk  
-) | diskpart  
+:: 清空并写入第一步diskpart指令
+echo select vdisk file="%ChildDisk%" > "%DiskPartScript%"
+echo detach vdisk >> "%DiskPartScript%"
+:: 执行diskpart脚本
+diskpart /s "%DiskPartScript%"  
 if !errorlevel! neq 0 (
-    echo 【警告】分离磁盘异常，继续执行...
+    echo 警告：分离虚拟磁盘失败 ...
+    rem goto Cleanup
 )
 
-:: 2.导出子盘信息，提取【父盘A路径】
-echo [2/5] 读取父磁盘A信息...
-(
-echo select vdisk file="%ChildDisk%"
-echo detail vdisk
-) | diskpart > "%WorkTmp%"
+:: 2.获取父磁盘信息（提取父盘路径）
+echo [2/5] 提取父磁盘A的信息...
+:: 清空并写入第二步diskpart指令
+echo select vdisk file="%ChildDisk%" > "%DiskPartScript%"
+echo detail vdisk >> "%DiskPartScript%"
+:: 执行并输出到临时详情文件
+diskpart /s "%DiskPartScript%" > "%WorkTmp%"
 
-:: 解析父路径：查找 "父虚拟磁盘" / "Parent virtual disk"
+:: 解析父盘路径（匹配"父文件名"  ）
 set "ParentDisk="
 for /f "tokens=1,* delims=:" %%a in (%WorkTmp%) do (
     echo "%%a" | findstr /i "父文件名" >nul
     if !errorlevel! equ 0 (
         set "ParentDisk=%%b"
-        set "ParentDisk=!ParentDisk:~1!"
+        set "ParentDisk=!ParentDisk:~1!"  :: 去除开头空格
     )
 )
 
+:: 删除详情临时文件
 del /f /q "%WorkTmp%" >nul 2>&1
 
 if not defined ParentDisk (
-    echo 【致命错误】未读取到上层父磁盘，当前已是基础盘，终止！
-    pause>nul
-    exit /b 2
+    echo 错误：未提取到合并源盘信息，当前已是根磁盘，终止！
+    goto Cleanup
 )
-echo 上层父磁盘A: !ParentDisk!
+echo 合并源盘A: !ParentDisk!
 
-:: 3.执行合并上一层 depth=1  —— 修复：使用 diskpart /s 捕获真实错误
-echo [3/5] 开始合并 B → A (depth=1)...
-
-set "mergeScript=%temp%\merge_tmp_%random%.txt"
-echo select vdisk file="%ChildDisk%" > "%mergeScript%"
-echo merge vdisk depth=1 >> "%mergeScript%"
-
-diskpart /s "%mergeScript%"
+:: 3.执行合并操作（depth=1）
+echo [3/5] 开始合并 B 到 A (depth=1)...
+:: 清空并写入第三步diskpart指令
+echo select vdisk file="%ChildDisk%" > "%DiskPartScript%"
+echo merge vdisk depth=1 >> "%DiskPartScript%"
+:: 执行合并
+diskpart /s "%DiskPartScript%"
 
 if !errorlevel! neq 0 (
-    echo 【致命错误】合并失败！立即终止，防止数据损坏
-    del /f /q "%mergeScript%" 2>nul
-    pause>nul
-    exit /b 3
+    echo 严重错误：合并失败，终止操作！
+    goto Cleanup
 )
-
-del /f /q "%mergeScript%" 2>nul
 echo 合并执行成功
 
-:: STEP
-echo [1/5] 收缩被压缩的磁盘 %ChildDisk% ...
+:: 4.压缩虚拟磁盘
+echo [4/5] 正在压缩磁盘 %ChildDisk% ...
 dir %ChildDisk%
-(
-echo select vdisk file="%ChildDisk%"
-echo COMPACT vdisk
-) | diskpart  
+:: 清空并写入第四步diskpart指令
+echo select vdisk file="%ChildDisk%" > "%DiskPartScript%"
+echo COMPACT vdisk >> "%DiskPartScript%"
+:: 执行压缩
+diskpart /s "%DiskPartScript%"  
 
 if !errorlevel! neq 0 (
-    echo 【警告】 收缩失败
-
+    echo 警告：压缩操作失败
 )
-echo 收缩执行成功
+echo 压缩执行完成
 dir %ChildDisk%
 
+:: 5.完成提示
+echo ==============================================
+echo 全部操作完成！
+echo 1.已将子盘 %ChildName% 合并至源盘 %ParentDisk%
+echo 2.子盘已完成压缩优化
+echo ==============================================
 
-:: 5.完成
-echo ==============================================
-echo 【全部完成】
-echo 1.已合并：%ChildName% 合并至上层父盘 %ParentFull%
-echo 2.两个文件名都不动
-echo ==============================================
+:: 清理临时文件
+:Cleanup
+if exist "%DiskPartScript%" del /f /q "%DiskPartScript%" 2>nul
+if exist "%WorkTmp%" del /f /q "%WorkTmp%" 2>nul
 pause>nul
+exit /b 0
+
