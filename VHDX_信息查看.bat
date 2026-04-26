@@ -84,18 +84,10 @@ echo [4/4] VHDX 层级关系分析...
 echo.
 
 if defined ParentPath (
-    echo 当前磁盘类型: 子差异磁盘
-    echo 父磁盘路径: !ParentPath!
+    echo 当前磁盘类型: 子差异磁盘 !TargetVHDX!
     echo.
+    call :ShowHierarchy "!TargetVHDX!" 1
 
-    :: 检查父磁盘是否存在
-    if exist "!ParentPath!" (
-        echo 父磁盘文件存在
-        call :ShowHierarchy "!ParentPath!" 1
-    ) else (
-        echo 【警告】父磁盘文件不存在！磁盘链已断裂
-        echo   这可能导致数据无法访问
-    )
 ) else (
     echo 当前磁盘类型: 基础磁盘（无父磁盘）
     echo.
@@ -138,6 +130,12 @@ del /f /q "!TempScript!" 2>nul
 del /f /q "!TempOutput!" 2>nul
 
 if defined NextParent (
+    :: 检查是否为设备路径，如果是则转换为盘符路径
+    echo "!NextParent!" | findstr /i "\\Device\\HarddiskVolume" >nul
+    if !errorlevel! equ 0 (
+        call :ConvertDevicePath "!NextParent!" NextParent
+    )
+
     echo !Indent!└─ 父磁盘: !NextParent!
     if exist "!NextParent!" (
         call :ShowHierarchy "!NextParent!" !IndentLevel!+1
@@ -148,6 +146,81 @@ if defined NextParent (
     echo !Indent!└─ [根磁盘]
 )
 
+goto :eof
+
+:: 将设备路径转换为盘符路径（使用PowerShell）
+:ConvertDevicePath
+setlocal
+set "DevicePath=%~1"
+
+:: 从设备路径提取 HarddiskVolumeXX 部分
+set "VolPattern="
+for /f "tokens=2 delims=\" %%a in ("!DevicePath!") do (
+    set "VolPattern=%%a"
+)
+
+if not defined VolPattern (
+    endlocal & set "%~2=%DevicePath%"
+    goto :eof
+)
+
+:: 创建临时PowerShell脚本
+set "PsScript=%temp%\convert_devpath_%random%.ps1"
+
+:: echo "%PsScript%"
+
+
+echo Add-Type @' > "%PsScript%"
+echo using System; >> "%PsScript%"
+echo using System.Runtime.InteropServices; >> "%PsScript%"
+echo public class Kernel32 { >> "%PsScript%"
+echo     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)] >> "%PsScript%"
+echo     public static extern bool QueryDosDevice(string lpDeviceName, char[] lpTargetPath, int ucchMax); >> "%PsScript%"
+echo } >> "%PsScript%"
+echo '@ >> "%PsScript%"
+echo. >> "%PsScript%"
+echo function Get-DevicePath { >> "%PsScript%"
+echo     param([string]$DriveLetter) >> "%PsScript%"
+echo     $buf = New-Object char[] 260 >> "%PsScript%"
+echo     $ok = [Kernel32]::QueryDosDevice($DriveLetter, $buf, $buf.Length) >> "%PsScript%"
+echo     if (-not $ok) { return $null } >> "%PsScript%"
+echo     return [string]::Join("", $buf).TrimEnd("`0") >> "%PsScript%"
+echo } >> "%PsScript%"
+echo. >> "%PsScript%"
+echo function Get-DriveLetterFromDevice { >> "%PsScript%"
+echo     param([string]$DevicePath) >> "%PsScript%"
+echo     Get-WmiObject Win32_Volume ^| ForEach-Object { >> "%PsScript%"
+echo         $dl = $_.DriveLetter >> "%PsScript%"
+echo         if (-not $dl) { return } >> "%PsScript%"
+echo         $dev = Get-DevicePath $dl >> "%PsScript%"
+echo         if ($dev -eq $DevicePath) { $dl } >> "%PsScript%"
+echo     } >> "%PsScript%"
+echo } >> "%PsScript%"
+echo. >> "%PsScript%"
+:: VolPattern=HarddiskVolumeolume14
+echo $targetDevice = "\Device\%VolPattern%" >> "%PsScript%"
+echo $result = Get-DriveLetterFromDevice -DevicePath $targetDevice >> "%PsScript%"
+echo if ($result) { >> "%PsScript%"
+echo     $converted = '%DevicePath%' -replace [regex]::Escape($targetDevice), $result >> "%PsScript%"
+echo     Write-Output $converted >> "%PsScript%"
+echo } else { >> "%PsScript%"
+echo     Write-Output '%DevicePath%' >> "%PsScript%"
+echo } >> "%PsScript%"
+
+
+:: 执行PowerShell脚本并获取结果
+for /f "usebackq delims=" %%p in (`powershell -ExecutionPolicy Bypass -File "%PsScript%" 2^>nul`) do (
+    set "ConvertedPath=%%p"
+)
+
+:: 清理临时文件
+del /f /q "%PsScript%" 2>nul
+
+if defined ConvertedPath (
+    endlocal & set "%~2=%ConvertedPath%"
+) else (
+    endlocal & set "%~2=%DevicePath%"
+)
 goto :eof
 
 :: 格式化文件大小
@@ -182,4 +255,3 @@ if exist "%DiskPartScript%" del /f /q "%DiskPartScript%" 2>nul
 if exist "%WorkTmp%" del /f /q "%WorkTmp%" 2>nul
 pause>nul
 exit /b 0
-
