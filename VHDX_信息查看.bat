@@ -37,7 +37,6 @@ for %%F in ("%TargetVHDX%") do (
     echo   文件名: %%~nxF
     echo   完整路径: %%~fF
     echo   文件大小: %%~zF 字节
-    call :FormatFileSize %%~zF
     echo   创建时间: %%~tF
     echo   驱动器: %%~dF
     echo   目录: %%~dpF
@@ -221,31 +220,6 @@ if defined ConvertedPath (
 ) else (
     endlocal & set "%~2=%DevicePath%"
 )
-goto :eof
-
-:: 格式化文件大小
-:FormatFileSize
-setlocal
-set /a SizeBytes=%1
-if %SizeBytes% LSS 1024 (
-    echo   文件大小: %SizeBytes% B
-    goto :FormatFileSizeEnd
-)
-if %SizeBytes% LSS 1048576 (
-    set /a SizeKB=%SizeBytes%/1024
-    echo   文件大小: !SizeKB! KB
-    goto :FormatFileSizeEnd
-)
-if %SizeBytes% LSS 1073741824 (
-    set /a SizeMB=%SizeBytes%/1048576
-    echo   文件大小: !SizeMB! MB
-    goto :FormatFileSizeEnd
-)
-set /a SizeGB=%SizeBytes%/1073741824
-set /a "Remainder=(%SizeBytes% %% 1073741824) * 100 / 1073741824"
-echo   文件大小: !SizeGB!.!Remainder! GB
-:FormatFileSizeEnd
-endlocal
 goto :eof
 
 
